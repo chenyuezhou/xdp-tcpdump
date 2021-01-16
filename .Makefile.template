@@ -1,0 +1,74 @@
+CC := {0}
+LLC ?= {1}
+CLANG ?= {2}
+
+
+OPT = {3}
+WARN = {4}
+DEBUG = {5}
+
+
+USER_OBJ = {6}
+
+
+BPF_CFLAGS = {7}
+BPF_DEFINE = {8}
+
+
+CFLAGS = {9}
+LDFLAGS = {10}
+LIBS = {11}
+
+
+XDP_PACKET_DUMP=xdp-packet-dump
+XDP_TCPDUMP=xdp-tcpdump
+
+
+Q = {12}
+E = @echo
+INSTALL = cp -pf
+INSTALL_BIN = {13}
+
+
+ENV={14}
+
+
+DEFINE = -DVERSION=\"`git describe --tags 2> /dev/null`\" -DXDP_BIN=\"$(INSTALL_BIN)/$(XDP_PACKET_DUMP)\"
+
+
+%.o: %.c
+	$(E) "CC        $@"
+	$(Q)$(ENV) $(CC) $(CFLAGS) $(LDFLAGS) $(WARN) $(LIBS) $(OPT) $(DEBUG) $(DEFINE) -g -c -o $@ $<
+
+
+all: $(XDP_PACKET_DUMP) $(XDP_TCPDUMP)
+
+
+$(XDP_PACKET_DUMP): src/xdp_packet_dump.c
+	$(E) "CLANG     $@"
+	$(Q)$(CLANG) $^ -target bpf $(BPF_DEFINE) $(BPF_CFLAGS) $(WARN) -O2 -emit-llvm -c -g -o -| $(LLC) -march=bpf -filetype=obj -o $@
+
+
+$(XDP_TCPDUMP): src/xdp_tcpdump.o \
+	$(USER_OBJ)
+	$(E) "LINK      $@"
+	$(Q)$(ENV) $(CC) $^ $(CFLAGS) $(LDFLAGS) $(WARN) $(LIBS) $(OPT) $(DEFINE) -o $@
+
+
+.PHONY: clean
+
+clean:
+	rm -f src/*.o $(XDP_PACKET_DUMP) $(XDP_TCPDUMP)
+
+
+.PHONY: install
+
+install:
+	$(Q)mkdir -p $(INSTALL_BIN)
+	$(INSTALL) $(XDP_PACKET_DUMP) $(XDP_TCPDUMP) $(INSTALL_BIN)
+
+
+.PHONY: uninstall
+
+uninstall:
+	rm -f $(INSTALL_BIN)/{{$(XDP_PACKET_DUMP),$(XDP_TCPDUMP)}}

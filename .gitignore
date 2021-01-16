@@ -1,0 +1,5 @@
+*.o
+*.pyc
+*.swp
+cscope.*
+tags

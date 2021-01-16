@@ -1,0 +1,249 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# Copyright © Chenyue Zhou (zcy.chenyue.zhou@gmail.com)
+#
+
+
+import os
+import sys
+import atexit
+import logging
+import argparse
+import subprocess
+
+
+pwd = os.getcwd()
+
+
+def get_absolute_path(path):
+    return os.path.join(pwd, path)
+
+
+log_formatter = logging.Formatter(
+        "%(asctime)s %(name)-10s %(levelname)-8s %(message)s")
+file_handler = logging.StreamHandler()
+file_handler.setFormatter(log_formatter)
+file_handler.setLevel(logging.INFO)
+
+log = logging.getLogger("xdp-tcpdump")
+log.setLevel(logging.INFO)
+log.addHandler(file_handler)
+
+
+state     = "normal"
+error_msg = ""
+
+
+def finish():
+    if state == "failed":
+        log.error("configure failed. %s" % error_msg)
+
+    elif state == "success":
+        log.info("configure success, try to make")
+
+    else:
+        pass
+
+
+atexit.register(finish)
+
+
+def exec_cmd(args):
+    print "${}\n".format(' '.join(args))
+    p = subprocess.Popen(args)
+
+    p.wait()
+    if p.stderr is not None:
+        global state
+        global error_msg
+
+        state     = "failed"
+        error_msg = ' '.join(args)
+
+        os.exit(-1)
+
+    print "${} success\n".format(' '.join(args))
+
+
+def new_dir(path):
+    args = ["mkdir", "-p", path]
+    exec_cmd(args)
+
+
+def write_makefile(argv):
+    global state
+    global error_msg
+
+    # read template
+    try:
+        fd = open(".Makefile.template", 'r')
+    except IOError as e:
+        state     = "failed"
+        error_msg = "{}".format(e)
+
+        os.exit(-1)
+
+    data = fd.read()
+    fd.close()
+
+    _cc    = "cc" if not argv.cc else argv.cc
+    _llc   = "llc" if not argv.llc else argv.llc
+    _clang = "clang" if not argv.clang else argv.clang
+
+    _opt   = "-O2"
+    _warn  = "-Wall -Wno-unused-value -Wno-pointer-sign -Werror"
+    _debug = "" if not argv.debug else "-DDEBUG"
+
+    _user_obj = \
+        "src/bpf_xdp_common_user.o " \
+        "src/bpf_xdp_log_user.o " \
+        "src/print_packet.o " \
+        "src/setproctitle.o " \
+        "src/config.o"
+
+    _bpf_cflags = "-I/lib/modules/`uname -r`/source/tools/perf "\
+        "-I/lib/modules/`uname -r`/source/tools/testing/selftests/bpf -I./src"
+
+    _bpf_define = "-D__BPF_TRACING__"
+
+    _cflags = "-I/lib/modules/`uname -r`/source/tools/perf "\
+        "-I/lib/modules/`uname -r`/source/tools/lib/bpf "\
+        "-I/lib/modules/`uname -r`/source/tools/include -I./src"
+    if argv.cppflags:
+        _cflags = "{0} {1}".format(_cflags, argv.cppflags)
+
+    if argv.cflags:
+        _cflags = "{0} {1}".format(_cflags, argv.cflags)
+
+    _ldflags = "-L/lib/modules/`uname -r`/source/tools/lib/bpf"
+    if argv.ldflags:
+        _ldflags = "{0} {1}".format(_ldflags, argv.ldflags)
+
+    _libs  = "-l:libbpf.a -lelf"
+    if argv.libs:
+        _libs = "{0} {1}".format(_libs, argv.libs)
+
+    if argv.verbose:
+        _quiet = ""
+    else:
+        _quiet = "@"
+
+    _install_bin = "/usr/local/bin"
+    if argv.prefix:
+        _install_bin = os.path.join(argv.prefix, "bin")
+
+    _library_path = ""
+    if argv.library_path:
+        _library_path = "LIBRARY_PAT=" + argv.library_path
+
+    _ld_library_path = ""
+    if argv.ld_library_path:
+        _ld_library_path = "LD_LIBRARY_PATH=" + argv.ld_library_path
+
+    _environ = "{0} {1}".format(_library_path, _ld_library_path)
+
+    mf = data.format(
+            _cc,
+            _llc,
+            _clang,
+            _opt,
+            _warn,
+            _debug,
+            _user_obj,
+            _bpf_cflags,
+            _bpf_define,
+            _cflags,
+            _ldflags,
+            _libs,
+            _quiet,
+            _install_bin,
+            _environ)
+
+    fd = open("Makefile", 'w')
+
+    fd.write(mf)
+
+    fd.close()
+
+
+def create_makefile(argv):
+    global state
+
+    write_makefile(argv)
+    state = "success"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+            description="`configure' configures xdp-tcpdump",
+            prog="configure")
+
+    parser.add_argument("--prefix",
+                        dest="prefix",
+                        default="",
+                        type=str,
+                        help="Specify install path")
+    parser.add_argument("--debug",
+                        action="store_true",
+                        help="Run in debug mode")
+    parser.add_argument("--verbose",
+                        action="store_true",
+                        help="Show full compile message")
+
+    group = parser.add_argument_group("Some influential environment variables:")
+
+    group.add_argument("--CC",
+                       dest="cc",
+                       default="",
+                       type=str,
+                       help="C compiler command")
+    group.add_argument("--CLANG",
+                       dest="clang",
+                       default="",
+                       type=str,
+                       help="CLANG compiler command")
+    group.add_argument("--LLC",
+                       dest="llc",
+                       default="",
+                       type=str,
+                       help="LLVM compiler command")
+    group.add_argument("--CFLAGS",
+                       dest="cflags",
+                       default="",
+                       type=str,
+                       help="C compiler flags")
+    group.add_argument("--LDFLAGS",
+                       dest="ldflags",
+                       default="",
+                       type=str,
+                       help="linker flags, e.g. -L<lib dir> if you have " \
+                            "libraries in a nonstandard directory <lib dir>")
+    group.add_argument("--LIBS",
+                       dest="libs",
+                       default="",
+                       type=str,
+                       help="libraries to pass to the linker, e.g. -l<library>")
+    group.add_argument("--CPPFLAGS",
+                       dest="cppflags",
+                       default="",
+                       type=str,
+                       help="(Objective) C/C++ preprocessor flags, e.g. " \
+                            "-I<include dir> if you have headers in a " \
+                            "nonstandard directory <include dir>")
+    group.add_argument("--LIBRARY_PATH",
+                       dest="library_path",
+                       default="",
+                       type=str,
+                       help="Used by gcc before compilation to search " \
+                            "directories containing static and shared " \
+                            "libraries that need to be linked to your program.")
+    group.add_argument("--LD_LIBRARY_PATH",
+                       dest="ld_library_path",
+                       default="",
+                       type=str,
+                       help="Used by your program to search directories " \
+                            "containing shared libraries after it has been " \
+                            "successfully compiled and linked.")
+
+    create_makefile(parser.parse_args())
